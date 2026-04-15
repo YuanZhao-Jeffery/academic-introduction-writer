@@ -6,16 +6,29 @@ const { validatePapers } = require('../services/crossref');
 // POST /api/papers/search
 // Body: { query: string, limit: number }
 router.post('/search', async (req, res) => {
-  const { query, limit = 80 } = req.body;
+  const { query, limit = 40 } = req.body;
 
   if (!query || query.trim().length < 2) {
     return res.status(400).json({ error: 'Query must be at least 2 characters.' });
   }
 
-  try {
-    const papers = await searchPapers(query.trim(), Math.min(limit, 200));
+  // Hard 25-second timeout — safely under Railway's 30s request limit
+  const timeoutHandle = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Search timed out. Try a more specific topic or fewer papers.' });
+    }
+  }, 25000);
 
-    // Aggregate field distribution
+  try {
+    const papers = await searchPapers(query.trim(), Math.min(limit, 100));
+
+    if (res.headersSent) return; // timeout already fired
+    clearTimeout(timeoutHandle);
+
+    if (papers.length === 0) {
+      return res.status(404).json({ error: 'No journal or conference papers found. Try a different topic.' });
+    }
+
     const fieldCounts = {};
     for (const paper of papers) {
       for (const field of (paper.fieldsOfStudy || [])) {
@@ -29,8 +42,11 @@ router.post('/search', async (req, res) => {
 
     res.json({ papers, fieldDistribution, total: papers.length });
   } catch (err) {
-    console.error('Search error:', err.message);
-    res.status(500).json({ error: 'Failed to search papers. Please try again.' });
+    clearTimeout(timeoutHandle);
+    if (!res.headersSent) {
+      console.error('Search error:', err.message);
+      res.status(500).json({ error: 'Search failed. Please try again.' });
+    }
   }
 });
 
