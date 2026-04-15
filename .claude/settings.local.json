@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"d:\\\\Desktop\\\\Claude Code Test\")",
+      "Bash(npm install:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Read(//c/Users/79817/AppData/Roaming/**)"
+    ]
+  }
+}
