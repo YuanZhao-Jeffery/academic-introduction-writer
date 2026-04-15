@@ -129,20 +129,33 @@ function titleSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
-async function validatePapers(papers) {
-  const results = [];
-  for (const paper of papers) {
-    const validation = await validatePaper(paper);
-    results.push({
-      ...paper,
-      validationStatus: validation && validation.valid ? 'valid' : 'invalid',
-      validationReason: validation ? validation.reason : 'Validation failed',
-      crossrefDoi: validation && validation.doi ? validation.doi : paper.doi,
-      publisher: validation && validation.publisher ? validation.publisher : ''
-    });
-    // Stay within CrossRef's polite rate limit
-    await new Promise(r => setTimeout(r, 150));
+async function validatePapers(papers, batchSize = 10) {
+  const results = new Array(papers.length);
+
+  for (let i = 0; i < papers.length; i += batchSize) {
+    const batch = papers.slice(i, i + batchSize);
+
+    const batchResults = await Promise.all(
+      batch.map(paper => validatePaper(paper))
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const validation = batchResults[j];
+      results[i + j] = {
+        ...batch[j],
+        validationStatus: validation && validation.valid ? 'valid' : 'invalid',
+        validationReason: validation ? validation.reason : 'Validation failed',
+        crossrefDoi: validation && validation.doi ? validation.doi : batch[j].doi,
+        publisher: validation && validation.publisher ? validation.publisher : ''
+      };
+    }
+
+    // Brief pause between batches to stay within CrossRef polite rate limit
+    if (i + batchSize < papers.length) {
+      await new Promise(r => setTimeout(r, 300));
+    }
   }
+
   return results;
 }
 
