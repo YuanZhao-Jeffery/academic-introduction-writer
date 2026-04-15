@@ -129,34 +129,59 @@ function titleSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
-async function validatePapers(papers, batchSize = 10) {
-  const results = new Array(papers.length);
+const SS_VALID_TYPES = new Set(['JournalArticle', 'Conference', 'ConferencePaper']);
 
-  for (let i = 0; i < papers.length; i += batchSize) {
-    const batch = papers.slice(i, i + batchSize);
+async function validatePapers(papers, batchSize = 15) {
+  // Split papers into two groups:
+  // - trusted: Semantic Scholar already confirmed a valid type AND has a DOI
+  //            → mark valid instantly, no CrossRef call needed
+  // - needsCheck: no DOI or type is uncertain → verify via CrossRef
+  const trusted = [];
+  const needsCheck = [];
 
-    const batchResults = await Promise.all(
-      batch.map(paper => validatePaper(paper))
-    );
+  for (const paper of papers) {
+    const hasValidType = (paper.publicationTypes || []).some(t => SS_VALID_TYPES.has(t));
+    if (hasValidType && paper.doi) {
+      trusted.push({
+        ...paper,
+        validationStatus: 'valid',
+        validationReason: `Verified by Semantic Scholar — type: ${paper.publicationTypes[0]}`,
+        crossrefDoi: paper.doi,
+        publisher: ''
+      });
+    } else {
+      needsCheck.push(paper);
+    }
+  }
+
+  // Run CrossRef only for the smaller subset that needs it
+  const crossrefResults = [];
+  for (let i = 0; i < needsCheck.length; i += batchSize) {
+    const batch = needsCheck.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(paper => validatePaper(paper)));
 
     for (let j = 0; j < batch.length; j++) {
       const validation = batchResults[j];
-      results[i + j] = {
+      crossrefResults.push({
         ...batch[j],
         validationStatus: validation && validation.valid ? 'valid' : 'invalid',
         validationReason: validation ? validation.reason : 'Validation failed',
         crossrefDoi: validation && validation.doi ? validation.doi : batch[j].doi,
         publisher: validation && validation.publisher ? validation.publisher : ''
-      };
+      });
     }
 
-    // Brief pause between batches to stay within CrossRef polite rate limit
-    if (i + batchSize < papers.length) {
-      await new Promise(r => setTimeout(r, 300));
+    if (i + batchSize < needsCheck.length) {
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
-  return results;
+  // Restore original order
+  const resultMap = new Map();
+  for (const p of [...trusted, ...crossrefResults]) {
+    resultMap.set(p.paperId, p);
+  }
+  return papers.map(p => resultMap.get(p.paperId) || p);
 }
 
 module.exports = { validatePapers };
